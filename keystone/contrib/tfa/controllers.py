@@ -14,339 +14,319 @@
 # License for the specific language governing permissions and limitations
 # under the License.
 
-"""Extensions supporting OAuth1."""
+"""Main entry point into the TFA Credentials service."""
+
+import uuid
+
+from keystoneclient.contrib.tfa import utils as tfa_utils
 
 from keystone.common import controller
 from keystone.common import dependency
-from keystone.common import wsgi
-from keystone import config
-from keystone.contrib.oauth1 import core as oauth1
-from keystone.contrib.oauth1 import validator
+from keystone.common import utils
 from keystone import exception
-from keystone.openstack.common import jsonutils
-from keystone.openstack.common import timeutils
+from keystone import token
 
 
-CONF = config.CONF
+@dependency.requires('catalog_api', 'credential_api', 'token_provider_api')
+class TfaController(controller.V3Controller):
+    def hello(self, context, credentials=None, tfaCredentials=None):
+        token_id = uuid.uuid4().hex
+        tenant_ref = self.identity_api.get_project(creds_ref['tenant_id'])
+        user_ref = self.identity_api.get_user(creds_ref['user_id'])
+        metadata_ref = {}
+        metadata_ref['roles'] = (
+            self.identity_api.get_roles_for_user_and_project(
+                user_ref['id'], tenant_ref['id']))
+
+        trust_id = creds_ref.get('trust_id')
+        if trust_id:
+            metadata_ref['trust_id'] = trust_id
+            metadata_ref['trustee_user_id'] = user_ref['id']
+
+        # Validate that the auth info is valid and nothing is disabled
+        token.validate_auth_info(self, user_ref, tenant_ref)
+
+        roles = metadata_ref.get('roles', [])
+        if not roles:
+            raise exception.Unauthorized(message='User not valid for tenant.')
+        roles_ref = [self.identity_api.get_role(role_id)
+                     for role_id in roles]
+
+        catalog_ref = self.catalog_api.get_catalog(
+            user_ref['id'], tenant_ref['id'], metadata_ref)
+
+        # NOTE(morganfainberg): Make sure the data is in correct form since it
+        # might be consumed external to Keystone and this is a v2.0 controller.
+        # The token provider doesn't actually expect either v2 or v3 user data.
+        user_ref = self.identity_api.v3_to_v2_user(user_ref)
+        auth_token_data = dict(user=user_ref,
+                               tenant=tenant_ref,
+                               metadata=metadata_ref,
+                               id='placeholder')
+        (token_id, token_data) = self.token_provider_api.issue_v2_token(
+            auth_token_data, roles_ref, catalog_ref)
+        return token_data
+
+'''
+    def check_signature(self, creds_ref, credentials):
+        signer = tfa_utils.TfaSigner(creds_ref['secret'])
+        signature = signer.generate(credentials)
+        if utils.auth_str_equal(credentials['signature'], signature):
+            return
+        # NOTE(vish): Some libraries don't use the port when signing
+        #             requests, so try again without port.
+        elif ':' in credentials['signature']:
+            hostname, _port = credentials['host'].split(':')
+            credentials['host'] = hostname
+            signature = signer.generate(credentials)
+            if not utils.auth_str_equal(credentials.signature, signature):
+                raise exception.Unauthorized(message='Invalid TFA signature.')
+        else:
+            raise exception.Unauthorized(message='TFA signature not supplied.')
 
 
-@dependency.requires('oauth_api', 'token_api')
-class ConsumerCrudV3(controller.V3Controller):
-    collection_name = 'consumers'
-    member_name = 'consumer'
+    def authenticate(self, context, credentials=None, tfaCredentials=None):
+        """Validate a signed EC2 request and provide a token.
 
-    @controller.protected()
-    def create_consumer(self, context, consumer):
-        ref = self._assign_unique_id(self._normalize_dict(consumer))
-        consumer_ref = self.oauth_api.create_consumer(ref)
-        return ConsumerCrudV3.wrap_member(context, consumer_ref)
+        Other services (such as Nova) use this **admin** call to determine
+        if a request they signed received is from a valid user.
 
-    @controller.protected()
-    def update_consumer(self, context, consumer_id, consumer):
-        self._require_matching_id(consumer_id, consumer)
-        ref = self._normalize_dict(consumer)
-        self._validate_consumer_ref(consumer)
-        ref = self.oauth_api.update_consumer(consumer_id, consumer)
-        return ConsumerCrudV3.wrap_member(context, ref)
+        If it is a valid signature, an OpenStack token that maps
+        to the user/tenant is returned to the caller, along with
+        all the other details returned from a normal token validation
+        call.
 
-    @controller.protected()
-    def list_consumers(self, context):
-        ref = self.oauth_api.list_consumers()
-        return ConsumerCrudV3.wrap_collection(context, ref)
+        The returned token is useful for making calls to other
+        OpenStack services within the context of the request.
 
-    @controller.protected()
-    def get_consumer(self, context, consumer_id):
-        ref = self.oauth_api.get_consumer(consumer_id)
-        return ConsumerCrudV3.wrap_member(context, ref)
-
-    @controller.protected()
-    def delete_consumer(self, context, consumer_id):
-        user_token_ref = self.token_api.get_token(context['token_id'])
-        user_id = user_token_ref['user'].get('id')
-        self.token_api.delete_tokens(user_id, consumer_id=consumer_id)
-        self.oauth_api.delete_consumer(consumer_id)
-
-    def _validate_consumer_ref(self, consumer):
-        if 'secret' in consumer:
-            msg = _('Cannot change consumer secret')
-            raise exception.ValidationError(message=msg)
-
-
-@dependency.requires('oauth_api', 'token_api')
-class AccessTokenCrudV3(controller.V3Controller):
-    collection_name = 'access_tokens'
-    member_name = 'access_token'
-
-    @controller.protected()
-    def get_access_token(self, context, user_id, access_token_id):
-        access_token = self.oauth_api.get_access_token(access_token_id)
-        if access_token['authorizing_user_id'] != user_id:
-            raise exception.NotFound()
-        access_token = self._format_token_entity(access_token)
-        return AccessTokenCrudV3.wrap_member(context, access_token)
-
-    @controller.protected()
-    def list_access_tokens(self, context, user_id):
-        refs = self.oauth_api.list_access_tokens(user_id)
-        formatted_refs = ([self._format_token_entity(x) for x in refs])
-        return AccessTokenCrudV3.wrap_collection(context, formatted_refs)
-
-    @controller.protected()
-    def delete_access_token(self, context, user_id, access_token_id):
-        access_token = self.oauth_api.get_access_token(access_token_id)
-        consumer_id = access_token['consumer_id']
-        self.token_api.delete_tokens(user_id, consumer_id=consumer_id)
-        return self.oauth_api.delete_access_token(
-            user_id, access_token_id)
-
-    def _format_token_entity(self, entity):
-
-        formatted_entity = entity.copy()
-        access_token_id = formatted_entity['id']
-        user_id = ""
-        if 'role_ids' in entity:
-            formatted_entity.pop('role_ids')
-        if 'access_secret' in entity:
-            formatted_entity.pop('access_secret')
-        if 'authorizing_user_id' in entity:
-            user_id = formatted_entity['authorizing_user_id']
-
-        url = ('/users/%(user_id)s/OS-OAUTH1/access_tokens/%(access_token_id)s'
-               '/roles' % {'user_id': user_id,
-                           'access_token_id': access_token_id})
-
-        formatted_entity.setdefault('links', {})
-        formatted_entity['links']['roles'] = (self.base_url(url))
-
-        return formatted_entity
-
-
-@dependency.requires('assignment_api', 'oauth_api')
-class AccessTokenRolesV3(controller.V3Controller):
-    collection_name = 'roles'
-    member_name = 'role'
-
-    @controller.protected()
-    def list_access_token_roles(self, context, user_id, access_token_id):
-        access_token = self.oauth_api.get_access_token(access_token_id)
-        if access_token['authorizing_user_id'] != user_id:
-            raise exception.NotFound()
-        authed_role_ids = access_token['role_ids']
-        authed_role_ids = jsonutils.loads(authed_role_ids)
-        refs = ([self._format_role_entity(x) for x in authed_role_ids])
-        return AccessTokenRolesV3.wrap_collection(context, refs)
-
-    @controller.protected()
-    def get_access_token_role(self, context, user_id,
-                              access_token_id, role_id):
-        access_token = self.oauth_api.get_access_token(access_token_id)
-        if access_token['authorizing_user_id'] != user_id:
-            raise exception.Unauthorized(_('User IDs do not match'))
-        authed_role_ids = access_token['role_ids']
-        authed_role_ids = jsonutils.loads(authed_role_ids)
-        for authed_role_id in authed_role_ids:
-            if authed_role_id == role_id:
-                role = self._format_role_entity(role_id)
-                return AccessTokenRolesV3.wrap_member(context, role)
-        raise exception.RoleNotFound(_('Could not find role'))
-
-    def _format_role_entity(self, role_id):
-        role = self.assignment_api.get_role(role_id)
-        formatted_entity = role.copy()
-        if 'description' in role:
-            formatted_entity.pop('description')
-        if 'enabled' in role:
-            formatted_entity.pop('enabled')
-        return formatted_entity
-
-
-@dependency.requires('assignment_api', 'oauth_api', 'token_api')
-class OAuthControllerV3(controller.V3Controller):
-    collection_name = 'not_used'
-    member_name = 'not_used'
-
-    def create_request_token(self, context):
-        headers = context['headers']
-        oauth_headers = oauth1.get_oauth_headers(headers)
-        consumer_id = oauth_headers.get('oauth_consumer_key')
-        requested_project_id = headers.get('Requested-Project-Id')
-        if not consumer_id:
-            raise exception.ValidationError(
-                attribute='oauth_consumer_key', target='request')
-        if not requested_project_id:
-            raise exception.ValidationError(
-                attribute='requested_project_id', target='request')
-
-        url = oauth1.rebuild_url(context['path'])
-
-        req_headers = {'Requested-Project-Id': requested_project_id}
-        req_headers.update(headers)
-        request_verifier = oauth1.RequestTokenEndpoint(
-            request_validator=validator.OAuthValidator(),
-            token_generator=oauth1.token_generator)
-        h, b, s = request_verifier.create_request_token_response(
-            url,
-            http_method='POST',
-            body=context['query_string'],
-            headers=req_headers)
-
-        if (not b) or int(s) > 399:
-            msg = _('Invalid signature')
-            raise exception.Unauthorized(message=msg)
-
-        request_token_duration = CONF.oauth1.request_token_duration
-        token_ref = self.oauth_api.create_request_token(consumer_id,
-                                                        requested_project_id,
-                                                        request_token_duration)
-
-        result = ('oauth_token=%(key)s&oauth_token_secret=%(secret)s'
-                  % {'key': token_ref['id'],
-                     'secret': token_ref['request_secret']})
-
-        if CONF.oauth1.request_token_duration:
-            expiry_bit = '&oauth_expires_at=%s' % token_ref['expires_at']
-            result += expiry_bit
-
-        headers = [('Content-Type', 'application/x-www-urlformencoded')]
-        response = wsgi.render_response(result,
-                                        status=(201, 'Created'),
-                                        headers=headers)
-
-        return response
-
-    def create_access_token(self, context):
-        headers = context['headers']
-        oauth_headers = oauth1.get_oauth_headers(headers)
-        consumer_id = oauth_headers.get('oauth_consumer_key')
-        request_token_id = oauth_headers.get('oauth_token')
-        oauth_verifier = oauth_headers.get('oauth_verifier')
-
-        if not consumer_id:
-            raise exception.ValidationError(
-                attribute='oauth_consumer_key', target='request')
-        if not request_token_id:
-            raise exception.ValidationError(
-                attribute='oauth_token', target='request')
-        if not oauth_verifier:
-            raise exception.ValidationError(
-                attribute='oauth_verifier', target='request')
-
-        req_token = self.oauth_api.get_request_token(
-            request_token_id)
-
-        expires_at = req_token['expires_at']
-        if expires_at:
-            now = timeutils.utcnow()
-            expires = timeutils.normalize_time(
-                timeutils.parse_isotime(expires_at))
-            if now > expires:
-                raise exception.Unauthorized(_('Request token is expired'))
-
-        url = oauth1.rebuild_url(context['path'])
-
-        access_verifier = oauth1.AccessTokenEndpoint(
-            request_validator=validator.OAuthValidator(),
-            token_generator=oauth1.token_generator)
-        h, b, s = access_verifier.create_access_token_response(
-            url,
-            http_method='POST',
-            body=context['query_string'],
-            headers=headers)
-        params = oauth1.extract_non_oauth_params(b)
-        if len(params) != 0:
-            msg = _('There should not be any non-oauth parameters')
-            raise exception.Unauthorized(message=msg)
-
-        if req_token['consumer_id'] != consumer_id:
-            msg = _('provided consumer key does not match stored consumer key')
-            raise exception.Unauthorized(message=msg)
-
-        if req_token['verifier'] != oauth_verifier:
-            msg = _('provided verifier does not match stored verifier')
-            raise exception.Unauthorized(message=msg)
-
-        if req_token['id'] != request_token_id:
-            msg = _('provided request key does not match stored request key')
-            raise exception.Unauthorized(message=msg)
-
-        if not req_token.get('authorizing_user_id'):
-            msg = _('Request Token does not have an authorizing user id')
-            raise exception.Unauthorized(message=msg)
-
-        access_token_duration = CONF.oauth1.access_token_duration
-        token_ref = self.oauth_api.create_access_token(request_token_id,
-                                                       access_token_duration)
-
-        result = ('oauth_token=%(key)s&oauth_token_secret=%(secret)s'
-                  % {'key': token_ref['id'],
-                     'secret': token_ref['access_secret']})
-
-        if CONF.oauth1.access_token_duration:
-            expiry_bit = '&oauth_expires_at=%s' % (token_ref['expires_at'])
-            result += expiry_bit
-
-        headers = [('Content-Type', 'application/x-www-urlformencoded')]
-        response = wsgi.render_response(result,
-                                        status=(201, 'Created'),
-                                        headers=headers)
-
-        return response
-
-    @controller.protected()
-    def authorize_request_token(self, context, request_token_id, roles):
-        """An authenticated user is going to authorize a request token.
-
-        As a security precaution, the requested roles must match those in
-        the request token. Because this is in a CLI-only world at the moment,
-        there is not another easy way to make sure the user knows which roles
-        are being requested before authorizing.
+        :param context: standard context
+        :param credentials: dict of ec2 signature
+        :param ec2Credentials: DEPRECATED dict of ec2 signature
+        :returns: token: OpenStack token equivalent to access key along
+                         with the corresponding service catalog and roles
         """
 
-        req_token = self.oauth_api.get_request_token(request_token_id)
+        # FIXME(ja): validate that a service token was used!
 
-        expires_at = req_token['expires_at']
-        if expires_at:
-            now = timeutils.utcnow()
-            expires = timeutils.normalize_time(
-                timeutils.parse_isotime(expires_at))
-            if now > expires:
-                raise exception.Unauthorized(_('Request token is expired'))
+        # NOTE(termie): backwards compat hack
+        if not credentials and tfaCredentials:
+            credentials = tfaCredentials
 
-        # put the roles in a set for easy comparison
-        authed_roles = set()
-        for role in roles:
-            authed_roles.add(role['id'])
+        if 'access' not in credentials:
+            raise exception.Unauthorized(message='TFA signature not supplied.')
 
-        # verify the authorizing user has the roles
-        user_token = self.token_api.get_token(context['token_id'])
-        user_id = user_token['user'].get('id')
-        project_id = req_token['requested_project_id']
-        user_roles = self.assignment_api.get_roles_for_user_and_project(
-            user_id, project_id)
-        cred_set = set(user_roles)
+        creds_ref = self._get_credentials(credentials['access'])
+        self.check_signature(creds_ref, credentials)
 
-        if not cred_set.issuperset(authed_roles):
-            msg = _('authorizing user does not have role required')
-            raise exception.Unauthorized(message=msg)
+        # TODO(termie): don't create new tokens every time
+        # TODO(termie): this is copied from TokenController.authenticate
+        token_id = uuid.uuid4().hex
+        tenant_ref = self.identity_api.get_project(creds_ref['tenant_id'])
+        user_ref = self.identity_api.get_user(creds_ref['user_id'])
+        metadata_ref = {}
+        metadata_ref['roles'] = (
+            self.identity_api.get_roles_for_user_and_project(
+                user_ref['id'], tenant_ref['id']))
 
-        # create list of just the id's for the backend
-        role_list = list(authed_roles)
+        trust_id = creds_ref.get('trust_id')
+        if trust_id:
+            metadata_ref['trust_id'] = trust_id
+            metadata_ref['trustee_user_id'] = user_ref['id']
 
-        # verify the user has the project too
-        req_project_id = req_token['requested_project_id']
-        user_projects = self.assignment_api.list_projects_for_user(user_id)
-        found = False
-        for user_project in user_projects:
-            if user_project['id'] == req_project_id:
-                found = True
-                break
-        if not found:
-            msg = _("User is not a member of the requested project")
-            raise exception.Unauthorized(message=msg)
+        # Validate that the auth info is valid and nothing is disabled
+        token.validate_auth_info(self, user_ref, tenant_ref)
 
-        # finally authorize the token
-        authed_token = self.oauth_api.authorize_request_token(
-            request_token_id, user_id, role_list)
+        roles = metadata_ref.get('roles', [])
+        if not roles:
+            raise exception.Unauthorized(message='User not valid for tenant.')
+        roles_ref = [self.identity_api.get_role(role_id)
+                     for role_id in roles]
 
-        to_return = {'token': {'oauth_verifier': authed_token['verifier']}}
-        return to_return
+        catalog_ref = self.catalog_api.get_catalog(
+            user_ref['id'], tenant_ref['id'], metadata_ref)
+
+        # NOTE(morganfainberg): Make sure the data is in correct form since it
+        # might be consumed external to Keystone and this is a v2.0 controller.
+        # The token provider doesn't actually expect either v2 or v3 user data.
+        user_ref = self.identity_api.v3_to_v2_user(user_ref)
+        auth_token_data = dict(user=user_ref,
+                               tenant=tenant_ref,
+                               metadata=metadata_ref,
+                               id='placeholder')
+        (token_id, token_data) = self.token_provider_api.issue_v2_token(
+            auth_token_data, roles_ref, catalog_ref)
+        return token_data
+
+    def create_credential(self, context, user_id, tenant_id):
+        """Create a secret/access pair for use with ec2 style auth.
+
+        Generates a new set of credentials that map the user/tenant
+        pair.
+
+        :param context: standard context
+        :param user_id: id of user
+        :param tenant_id: id of tenant
+        :returns: credential: dict of ec2 credential
+        """
+        if not self._is_admin(context):
+            self._assert_identity(context, user_id)
+
+        self._assert_valid_user_id(user_id)
+        self._assert_valid_project_id(tenant_id)
+        trust_id = self._context_trust_id(context)
+        blob = {'access': uuid.uuid4().hex,
+                'secret': uuid.uuid4().hex,
+                'trust_id': trust_id}
+        credential_id = utils.hash_access_key(blob['access'])
+        cred_ref = {'user_id': user_id,
+                    'project_id': tenant_id,
+                    'blob': blob,
+                    'id': credential_id,
+                    'type': 'tfa'}
+        self.credential_api.create_credential(credential_id, cred_ref)
+        return {'credential': self._convert_v3_to_tfa_credential(cred_ref)}
+
+    def get_credentials(self, context, user_id):
+        """List all credentials for a user.
+
+        :param context: standard context
+        :param user_id: id of user
+        :returns: credentials: list of ec2 credential dicts
+        """
+        if not self._is_admin(context):
+            self._assert_identity(context, user_id)
+        self._assert_valid_user_id(user_id)
+        credential_refs = self.credential_api.list_credentials(
+            user_id=user_id)
+        return {'credentials':
+                [self._convert_v3_to_tfa_credential(credential)
+                for credential in credential_refs]}
+
+    def get_credential(self, context, user_id, credential_id):
+        """Retrieve a user's access/secret pair by the access key.
+
+        Grab the full access/secret pair for a given access key.
+
+        :param context: standard context
+        :param user_id: id of user
+        :param credential_id: access key for credentials
+        :returns: credential: dict of ec2 credential
+        """
+        if not self._is_admin(context):
+            self._assert_identity(context, user_id)
+        self._assert_valid_user_id(user_id)
+        return {'credential': self._get_credentials(credential_id)}
+
+    def delete_credential(self, context, user_id, credential_id):
+        """Delete a user's access/secret pair.
+
+        Used to revoke a user's access/secret pair
+
+        :param context: standard context
+        :param user_id: id of user
+        :param credential_id: access key for credentials
+        :returns: bool: success
+        """
+        if not self._is_admin(context):
+            self._assert_identity(context, user_id)
+            self._assert_owner(user_id, credential_id)
+
+        self._assert_valid_user_id(user_id)
+        self._get_credentials(credential_id)
+        tfa_credential_id = utils.hash_access_key(credential_id)
+        return self.credential_api.delete_credential(tfa_credential_id)
+
+    def _convert_v3_to_tfa_credential(self, credential):
+
+        blob = credential['blob']
+        return {'user_id': credential.get('user_id'),
+                'tenant_id': credential.get('project_id'),
+                'access': blob.get('access'),
+                'secret': blob.get('secret'),
+                'trust_id': blob.get('trust_id')}
+
+    def _get_credentials(self, credential_id):
+        """Return credentials from an ID.
+
+        :param credential_id: id of credential
+        :raises exception.Unauthorized: when credential id is invalid
+        :returns: credential: dict of ec2 credential.
+        """
+        tfa_credential_id = utils.hash_access_key(credential_id)
+        creds = self.credential_api.get_credential(tfa_credential_id)
+        if not creds:
+            raise exception.Unauthorized(message='TFA access key not found.')
+        return self._convert_v3_to_tfa_credential(creds)
+
+    def _assert_identity(self, context, user_id):
+        """Check that the provided token belongs to the user.
+
+        :param context: standard context
+        :param user_id: id of user
+        :raises exception.Forbidden: when token is invalid
+
+        """
+        try:
+            token_ref = self.token_api.get_token(context['token_id'])
+        except exception.TokenNotFound as e:
+            raise exception.Unauthorized(e)
+
+        if token_ref['user'].get('id') != user_id:
+            raise exception.Forbidden(_('Token belongs to another user'))
+
+    def _context_trust_id(self, context):
+        try:
+            token_ref = self.token_api.get_token(context['token_id'])
+        except exception.TokenNotFound as e:
+            raise exception.Unauthorized(e)
+        return token_ref.get('trust_id')
+
+    def _is_admin(self, context):
+        """Wrap admin assertion error return statement.
+
+        :param context: standard context
+        :returns: bool: success
+
+        """
+        try:
+            self.assert_admin(context)
+            return True
+        except exception.Forbidden:
+            return False
+
+    def _assert_owner(self, user_id, credential_id):
+        """Ensure the provided user owns the credential.
+
+        :param user_id: expected credential owner
+        :param credential_id: id of credential object
+        :raises exception.Forbidden: on failure
+
+        """
+        cred_ref = self.credential_api.get_credential(credential_id)
+        if user_id != cred_ref['user_id']:
+            raise exception.Forbidden(_('Credential belongs to another user'))
+
+    def _assert_valid_user_id(self, user_id):
+        """Ensure a valid user id.
+
+        :param context: standard context
+        :param user_id: expected credential owner
+        :raises exception.UserNotFound: on failure
+
+        """
+        user_ref = self.identity_api.get_user(user_id)
+        if not user_ref:
+            raise exception.UserNotFound(user_id=user_id)
+
+    def _assert_valid_project_id(self, project_id):
+        """Ensure a valid project id.
+
+        :param context: standard context
+        :param project_id: expected project
+        :raises exception.ProjectNotFound: on failure
+
+        """
+        project_ref = self.identity_api.get_project(project_id)
+        if not project_ref:
+            raise exception.ProjectNotFound(project_id=project_id)
+'''
