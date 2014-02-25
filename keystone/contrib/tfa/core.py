@@ -23,8 +23,8 @@ CONF = config.CONF
 EXTENSION_DATA = {
     'name': 'OpenStack TFA API',
     'namespace': 'http://docs.openstack.org/identity/api/ext/'
-                 'OS-TFA/v1.0',
-    'alias': 'OS-TFA',
+                 'tfa/v1.0',
+    'alias': 'tfa',
     'updated': '2013-07-07T12:00:0-00:00',
     'description': 'OpenStack TFA Credentials backend.',
     'links': [

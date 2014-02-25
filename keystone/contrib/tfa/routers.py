@@ -27,34 +27,3 @@ class TfaExtension(wsgi.ExtensionRouter):
             controller=tfa_controller,
             action='hello',
             conditions=dict(method=['GET']))
-'''
-        # validation
-        mapper.connect(
-            '/tfatokens',
-            controller=tfa_controller,
-            action='authenticate',
-            conditions=dict(method=['POST']))
-
-        # crud
-        mapper.connect(
-            '/users/{user_id}/credentials/OS-TFA',
-            controller=tfa_controller,
-            action='create_credential',
-            conditions=dict(method=['POST']))
-        mapper.connect(
-            '/users/{user_id}/credentials/OS-TFA',
-            controller=tfa_controller,
-            action='get_credentials',
-            conditions=dict(method=['GET']))
-        mapper.connect(
-            '/users/{user_id}/credentials/OS-TFA/{credential_id}',
-            controller=tfa_controller,
-            action='get_credential',
-            conditions=dict(method=['GET']))
-        mapper.connect(
-            '/users/{user_id}/credentials/OS-TFA/{credential_id}',
-            controller=tfa_controller,
-            action='delete_credential',
-            conditions=dict(method=['DELETE']))
-'''
-
