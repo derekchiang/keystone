@@ -21,7 +21,7 @@ from keystone.openstack.common import log as logging
 
 _DEFAULT_LOG_FORMAT = "%(asctime)s %(levelname)8s [%(name)s] %(message)s"
 _DEFAULT_LOG_DATE_FORMAT = "%Y-%m-%d %H:%M:%S"
-_DEFAULT_AUTH_METHODS = ['external', 'password', 'token']
+_DEFAULT_AUTH_METHODS = ['external', 'password', 'token', 'tfa']
 
 
 FILE_OPTIONS = {
@@ -246,6 +246,8 @@ FILE_OPTIONS = {
         cfg.ListOpt('methods', default=_DEFAULT_AUTH_METHODS),
         cfg.StrOpt('password',
                    default='keystone.auth.plugins.password.Password'),
+        cfg.StrOpt('tfa',
+                   default='keystone.auth.plugins.tfa.Tfa'),
         cfg.StrOpt('token',
                    default='keystone.auth.plugins.token.Token'),
         #deals with REMOTE_USER authentication
