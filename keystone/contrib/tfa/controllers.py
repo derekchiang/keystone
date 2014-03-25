@@ -16,19 +16,22 @@
 
 """Main entry point into the TFA Credentials service."""
 
-#import uuid
-
-#from keystoneclient.contrib.tfa import utils as tfa_utils
-
+from keystone import identity
 from keystone.common import controller
-#from keystone.common import dependency
-#from keystone.common import utils
-#from keystone import exception
-#from keystone import token
+from keystone.common import exception
+from keystone.common import utils
 
+class TfaController(identity.controllers.UserV3):
 
-#@dependency.requires('catalog_api', 'credential_api', 'token_provider_api')
-class TfaController(controller.V3Controller):
-    def hello(self, context, credentials=None, tfaCredentials=None):
-        print("hello world")
-        return {'hello': 'world'}
+    @controller.protected()
+    def reset_secret(self, context, user_id, user):
+        token_id = context.get('token_id')
+        token_ref = self.token_api.get_token(token_id)
+        user_id_from_token = token_ref['user'][id]
+
+        if user_id_from_token != user_id:
+            raise exception.Forbidden('Token belongs to another user')
+
+        user['tfa_secret'] = utils.generate_tfa_secret()
+        super(TfaController, self).update_user(context, user_id, user)
+        return {'secret': user['tfa_secret']}

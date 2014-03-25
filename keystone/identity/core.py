@@ -299,9 +299,12 @@ class Manager(manager.Manager):
     # - clear/set domain_ids for drivers that do not support domains
 
     @domains_configured
-    def authenticate(self, user_id, password, domain_scope=None):
+    def authenticate(self, user_id, password, tfa_password=None, domain_scope=None):
         domain_id, driver = self._get_domain_id_and_driver(domain_scope)
-        ref = driver.authenticate(user_id, password)
+        if tfa_password:
+            ref = driver.authenticate_with_tfa(user_id, password, tfa_password)
+        else:
+            ref = driver.authenticate(user_id, password)
         if not driver.is_domain_aware():
             ref = self._set_domain_id(ref, domain_id)
         return ref
@@ -560,6 +563,14 @@ class Driver(object):
     """Interface description for an Identity driver."""
     def authenticate(self, user_id, password):
         """Authenticate a given user and password.
+        :returns: user_ref
+        :raises: AssertionError
+        """
+        raise exception.NotImplemented()
+
+    def authenticate_with_tfa(self, user_id, password, tfa_password):
+        """Authenticate a given user, his or her password, and optionally a
+        second-factor password.
         :returns: user_ref
         :raises: AssertionError
         """

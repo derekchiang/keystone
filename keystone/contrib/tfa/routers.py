@@ -23,7 +23,7 @@ class TfaExtension(wsgi.ExtensionRouter):
         tfa_controller = controllers.TfaController()
         #hello world
         mapper.connect(
-            '/tfa',
+            '/tfa/reset_secret/{user_id}',
             controller=tfa_controller,
-            action='hello',
-            conditions=dict(method=['GET']))
+            action='reset_secret',
+            conditions=dict(method=['PATCH']))

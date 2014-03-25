@@ -22,8 +22,10 @@ def upgrade(migrate_engine):
     meta.bind = migrate_engine
 
     user_table = sql.Table('user', meta, autoload=True)
-    tfa_enabled = sql.Column('tfa_enabled', sql.Boolean, default=True)
+    tfa_enabled = sql.Column('tfa_enabled', sql.Boolean, default=False)
+    tfa_secret = sql.Column('tfa_secret', sql.String(64))
     user_table.create_column(tfa_enabled)
+    user_table.create_column(tfa_secret)
 
 
 def downgrade(migrate_engine):
@@ -32,3 +34,4 @@ def downgrade(migrate_engine):
 
     user_table = sql.Table('user', meta, autoload=True)
     user_table.drop_column('tfa_enabled')
+    user_table.drop_column('tfa_secret')

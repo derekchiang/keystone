@@ -34,7 +34,7 @@ class User(sql.ModelBase, sql.DictBase):
     enabled = sql.Column(sql.Boolean)
     extra = sql.Column(sql.JsonBlob())
     default_project_id = sql.Column(sql.String(64))
-    tfa_enabled = sql.Column(sql.Boolean, default=True)
+    tfa_enabled = sql.Column(sql.Boolean, default=False)
     # Unique constraint across two columns to create the separation
     # rather than just only 'name' being unique
     __table_args__ = (sql.UniqueConstraint('domain_id', 'name'), {})
@@ -94,11 +94,20 @@ class Identity(sql.Base, identity.Driver):
         """
         return utils.check_password(password, user_ref.password)
 
+    def _check_tfa_password(self, tfa_password, user_ref):
+        return utils.check_tfa_password(tfa_password, user_ref.tfa_secret)
+
     def is_domain_aware(self):
         return True
 
     # Identity interface
     def authenticate(self, user_id, password):
+        return self._authenticate(user_id, password)
+
+    def authenticate_with_tfa(self, user_id, password, tfa_password):
+        return self._authenticate(user_id, password, tfa_password)
+
+    def _authenticate(self, user_id, password, tfa_password=None):
         session = self.get_session()
         user_ref = None
         try:
@@ -107,6 +116,14 @@ class Identity(sql.Base, identity.Driver):
             raise AssertionError('Invalid user / password')
         if not self._check_password(password, user_ref):
             raise AssertionError('Invalid user / password')
+        elif user_ref.tfa_enabled:
+            if tfa_password is None:
+                raise AssertionError('User enabled two-factor authentication but no '
+                                     'second-factor password is not provided')
+            elif not self._check_tfa_password(tfa_password, user_ref):
+                raise AssertionError('User enabled two-factor authentication but the '
+                                     'second-factor password is incorrect')
+
         return identity.filter_user(user_ref.to_dict())
 
     # user crud

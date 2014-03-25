@@ -18,12 +18,15 @@
 #    License for the specific language governing permissions and limitations
 #    under the License.
 
+import base64
 import calendar
 import grp
 import hashlib
+import hmac
 import json
 import os
 import pwd
+import struct
 
 import passlib.hash
 
@@ -516,3 +519,31 @@ def make_dirs(path, mode=None, user=None, group=None, log=None):
             raise EnvironmentError("makedirs('%s'): %s" % (path, exc.strerror))
 
     set_permissions(path, mode, user, group, log)
+
+
+def generate_tfa_secret():
+    return base64.b32encode(os.urandom(10))
+
+
+def authenticate_tfa_password(secret, tfa_password):
+    # raise if nstr contains anything but numbers
+    int(tfa_password)
+    tm = int(time.time() / 30)
+    secret = base64.b32decode(secret)
+
+    # try 30 seconds behind and ahead as well
+    for ix in [-1, 0, 1]:
+        # convert timestamp to raw bytes
+        b = struct.pack(">q", tm + ix)
+        # generate HMAC-SHA1 from timestamp based on secret key
+        hm = hmac.HMAC(secret, b, hashlib.sha1).digest()
+        # extract 4 bytes from digest based on LSB
+        offset = ord(hm[-1]) & 0x0F
+        truncatedHash = hm[offset:offset + 4]
+        # get the code from it
+        code = struct.unpack(">L", truncatedHash)[0]
+        code &= 0x7FFFFFFF
+        code %= 1000000
+        if ("%06d" % code) == tfa_password:
+            return True
+    return False
