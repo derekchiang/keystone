@@ -25,6 +25,7 @@ from keystone.common import dependency
 from keystone.common import wsgi
 from keystone import config
 from keystone.contrib import endpoint_filter
+from keystone.contrib.tfa import TfaExtension
 from keystone import controllers
 from keystone import credential
 from keystone import identity
@@ -132,5 +133,6 @@ def v3_app_factory(global_conf, **local_conf):
     # Add in the v3 version api
     v3routers.append(routers.VersionV3('admin'))
     v3routers.append(routers.VersionV3('public'))
+    v3routers.append(TfaExtension('public'))
     # TODO(ayoung): put token routes here
     return wsgi.ComposingRouter(mapper, v3routers)
