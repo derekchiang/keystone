@@ -17,9 +17,10 @@
 """Main entry point into the TFA Credentials service."""
 
 from keystone import identity
+from keystone import exception
 from keystone.common import controller
-from keystone.common import exception
 from keystone.common import utils
+
 
 class TfaController(identity.controllers.UserV3):
 
