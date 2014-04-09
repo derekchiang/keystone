@@ -109,9 +109,9 @@ class Password(auth.AuthMethodHandler):
                 user_id=user_info.user_id,
                 password=user_info.password,
                 domain_scope=user_info.domain_id)
-        except AssertionError:
+        except AssertionError as e:
             # authentication failed because of invalid username or password
-            msg = _('Invalid username or password')
+            msg = _(str(e))
             raise exception.Unauthorized(msg)
 
         if 'user_id' not in user_context:

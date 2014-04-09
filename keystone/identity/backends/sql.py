@@ -25,7 +25,7 @@ from keystone import identity
 class User(sql.ModelBase, sql.DictBase):
     __tablename__ = 'user'
     attributes = ['id', 'name', 'domain_id', 'password', 'enabled',
-                  'default_project_id', 'tfa_enabled']
+                  'default_project_id']
     id = sql.Column(sql.String(64), primary_key=True)
     name = sql.Column(sql.String(255), nullable=False)
     domain_id = sql.Column(sql.String(64), sql.ForeignKey('domain.id'),
@@ -34,7 +34,6 @@ class User(sql.ModelBase, sql.DictBase):
     enabled = sql.Column(sql.Boolean)
     extra = sql.Column(sql.JsonBlob())
     default_project_id = sql.Column(sql.String(64))
-    tfa_enabled = sql.Column(sql.Boolean, default=False)
     # Unique constraint across two columns to create the separation
     # rather than just only 'name' being unique
     __table_args__ = (sql.UniqueConstraint('domain_id', 'name'), {})
@@ -95,7 +94,7 @@ class Identity(sql.Base, identity.Driver):
         return utils.check_password(password, user_ref.password)
 
     def _check_tfa_password(self, tfa_password, user_ref):
-        return utils.check_tfa_password(tfa_password, user_ref.tfa_secret)
+        return utils.check_tfa_password(tfa_password, user_ref['tfa_secret'])
 
     def is_domain_aware(self):
         return True
@@ -116,10 +115,10 @@ class Identity(sql.Base, identity.Driver):
             raise AssertionError('Invalid user / password')
         if not self._check_password(password, user_ref):
             raise AssertionError('Invalid user / password')
-        elif user_ref.tfa_enabled:
+        elif user_ref['tfa_enabled']:
             if tfa_password is None:
                 raise AssertionError('User enabled two-factor authentication but no '
-                                     'second-factor password is not provided')
+                                     'second-factor password is provided')
             elif not self._check_tfa_password(tfa_password, user_ref):
                 raise AssertionError('User enabled two-factor authentication but the '
                                      'second-factor password is incorrect')

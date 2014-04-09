@@ -25,14 +25,16 @@ from keystone.common import utils
 class TfaController(identity.controllers.UserV3):
 
     @controller.protected()
-    def reset_secret(self, context, user_id, user):
+    def reset_secret(self, context, user_id):
         token_id = context.get('token_id')
         token_ref = self.token_api.get_token(token_id)
-        user_id_from_token = token_ref['user'][id]
+        user_id_from_token = token_ref['user']['id']
 
-        if user_id_from_token != user_id:
+        # You have to be either the user, or an admin
+        if user_id_from_token != user_id and self.assert_admin(context) is not None:
             raise exception.Forbidden('Token belongs to another user')
 
+        user = self.get_user(context, user_id)['user']
         user['tfa_secret'] = utils.generate_tfa_secret()
         super(TfaController, self).update_user(context, user_id, user)
-        return {'secret': user['tfa_secret']}
+        return user

@@ -27,6 +27,7 @@ import json
 import os
 import pwd
 import struct
+import time
 
 import passlib.hash
 
@@ -525,7 +526,7 @@ def generate_tfa_secret():
     return base64.b32encode(os.urandom(10))
 
 
-def authenticate_tfa_password(secret, tfa_password):
+def check_tfa_password(tfa_password, secret):
     # raise if nstr contains anything but numbers
     int(tfa_password)
     tm = int(time.time() / 30)
