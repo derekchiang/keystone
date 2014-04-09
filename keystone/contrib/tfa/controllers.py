@@ -37,4 +37,4 @@ class TfaController(identity.controllers.UserV3):
         user = self.get_user(context, user_id)['user']
         user['tfa_secret'] = utils.generate_tfa_secret()
         super(TfaController, self).update_user(context, user_id, user)
-        return user
+        return {'secret': user['tfa_secret']}
