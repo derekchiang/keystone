@@ -33,6 +33,7 @@ class User(sql.ModelBase, sql.DictBase):
     password = sql.Column(sql.String(128))
     enabled = sql.Column(sql.Boolean)
     tfa_enabled = sql.Column(sql.Boolean, default=False)
+    tfa_secret = sql.Column(sql.String(64))
     extra = sql.Column(sql.JsonBlob())
     default_project_id = sql.Column(sql.String(64))
     # Unique constraint across two columns to create the separation
