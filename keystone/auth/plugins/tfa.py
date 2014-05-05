@@ -103,7 +103,7 @@ class Tfa(auth.AuthMethodHandler):
     """Currently, only the SQL backend supports this authentication method"""
 
     def authenticate(self, context, auth_payload, user_context):
-        """Try to authenticate against the identity backend.""" 
+        """Try to authenticate against the identity backend."""
         user_info = UserAuthInfo(auth_payload)
 
         try:
@@ -111,9 +111,11 @@ class Tfa(auth.AuthMethodHandler):
                 user_id=user_info.user_id,
                 password=user_info.password,
                 tfa_password=user_info.tfa_password)
-        except AssertionError as e:
-            # TODO: maybe it's better to distinguish between invalid username/password
-            # and invalid second-factor password
+        except exception.AccessAssertionError as e:
+            # TODO: validate different exceptions
+            msg = _(str(e))
+            raise exception.Unauthorized(msg)
+        except exception.AccessAssertionError as e:
             msg = _(str(e))
             raise exception.Unauthorized(msg)
 

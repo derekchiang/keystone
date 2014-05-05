@@ -118,6 +118,12 @@ class Unauthorized(SecurityError):
     title = 'Unauthorized'
 
 
+class TFAException(SecurityError):
+    message_format = _("The request you have made requires tfa authentication")
+    code = 401
+    title = 'Unauthorized'
+
+
 class AuthPluginException(Unauthorized):
     message_format = _("Authentication plugin error.")
 
@@ -251,3 +257,12 @@ class NotImplemented(Error):
 class PasteConfigNotFound(UnexpectedError):
     message_format = _("The Keystone paste configuration file"
                        " %(config_file)s could not be found.")
+
+
+class AccessAssertionError(AssertionError):
+    message_format = _("Invalid user / password")
+
+
+class TFAAssertionError(AssertionError):
+    message_format = _('User enabled two-factor authentication but no '
+                                        'second-factor password is provided')

@@ -113,15 +113,15 @@ class Identity(sql.Base, identity.Driver):
         try:
             user_ref = self._get_user(session, user_id)
         except exception.UserNotFound:
-            raise AssertionError('Invalid user / password')
+            raise exception.AccessAssertionError('Invalid user / password')
         if not self._check_password(password, user_ref):
-            raise AssertionError('Invalid user / password')
+            raise exception.AccessAssertionError('Invalid user / password')
         elif user_ref['tfa_enabled']:
             if tfa_password is None:
-                raise AssertionError('User enabled two-factor authentication but no '
-                                     'second-factor password is provided')
+                raise exception.TFAAssertionError('User enabled two-factor'
+                                     'authentication enabled.')
             elif not self._check_tfa_password(tfa_password, user_ref):
-                raise AssertionError('User enabled two-factor authentication but the '
+                raise exception.TFAAssertionError('User enabled two-factor'
                                      'second-factor password is incorrect')
 
         return identity.filter_user(user_ref.to_dict())
