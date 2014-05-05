@@ -115,9 +115,9 @@ class Tfa(auth.AuthMethodHandler):
             # TODO: validate different exceptions
             msg = _(str(e))
             raise exception.Unauthorized(msg)
-        except exception.AccessAssertionError as e:
+        except exception.TFAAssertionError as e:
             msg = _(str(e))
-            raise exception.Unauthorized(msg)
+            raise exception.TFAException(msg)
 
         if 'user_id' not in user_context:
             user_context['user_id'] = user_info.user_id
