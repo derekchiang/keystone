@@ -1,4 +1,7 @@
 [DEFAULT]
+admin_token = password 
+admin_endpoint = http://10.0.2.15:%(admin_port)s/
+public_endpoint = http://10.0.2.15:%(public_port)s/
 # A "shared secret" between keystone and other openstack services
 # admin_token = ADMIN
 
@@ -139,6 +142,7 @@
 # control_exchange = openstack
 
 [sql]
+connection = mysql://root:123456@127.0.0.1/keystone?charset=utf8
 # The SQLAlchemy connection string used to connect to the database
 # connection = sqlite:///keystone.db
 
@@ -146,6 +150,7 @@
 # idle_timeout = 200
 
 [identity]
+driver = keystone.identity.backends.sql.Identity
 # driver = keystone.identity.backends.sql.Identity
 
 # This references the domain to use for all Identity API v2 requests (which are
@@ -182,6 +187,7 @@
 # enabled = False
 
 [catalog]
+driver = keystone.catalog.backends.sql.Catalog
 # dynamic, sql-based backend (supports API/CLI-based management commands)
 # driver = keystone.catalog.backends.sql.Catalog
 
@@ -197,6 +203,7 @@
 # return_all_endpoints_if_no_filter = True
 
 [token]
+driver = keystone.token.backends.sql.Token
 # Provides token persistence.
 # driver = keystone.token.backends.sql.Token
 
@@ -271,9 +278,11 @@
 # driver = keystone.policy.backends.sql.Policy
 
 [ec2]
+driver = keystone.contrib.ec2.backends.sql.Ec2
 # driver = keystone.contrib.ec2.backends.kvs.Ec2
 
 [assignment]
+driver = keystone.assignment.backends.sql.Assignment
 # driver =
 
 # Assignment specific caching toggle. This has no effect unless the global
@@ -305,6 +314,7 @@
 #cert_subject = /C=US/ST=Unset/L=Unset/O=Unset/CN=localhost
 
 [signing]
+token_format = PKI
 # Deprecated in favor of provider in the [token] section
 # Allowed values are PKI or UUID
 #token_format =
@@ -417,12 +427,13 @@
 # user_additional_attribute_mapping =
 
 [auth]
-methods = external,password,token,oauth1
+methods = external,password,token,oauth1,tfa
 #external = keystone.auth.plugins.external.ExternalDefault
 password = keystone.auth.plugins.password.Password
 token = keystone.auth.plugins.token.Token
 oauth1 = keystone.auth.plugins.oauth1.OAuth
+tfa = keystone.auth.plugins.tfa.Tfa
 
 [paste_deploy]
 # Name of the paste configuration file that defines the available pipelines
-config_file = keystone-paste.ini
+config_file = /etc/keystone/keystone-paste.ini
